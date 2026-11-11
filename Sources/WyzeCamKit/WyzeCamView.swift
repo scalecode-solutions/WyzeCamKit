@@ -98,6 +98,7 @@ struct WyzeCamTile: View {
                 Circle()
                     .fill(camera.online ? AnyShapeStyle(CameraTint(color: camera.color)) : AnyShapeStyle(.gray))
                     .frame(width: 8, height: 8)
+                    .accessibilityLabel(camera.online ? "Online" : "Offline")
                 Text(camera.name)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
@@ -111,8 +112,10 @@ struct WyzeCamTile: View {
             .padding(.horizontal, 2)
         }
         .contentShape(Rectangle())
+        // Combine the children's own labels (name, online, "Shared with you",
+        // and the stream's state or error) rather than replacing them.
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(camera.name), \(camera.online ? "online" : "offline")")
+        .accessibilityHint(camera.online ? "Opens the live view" : "")
     }
 }
 

@@ -35,6 +35,21 @@ public enum WyzeCamSharing {
         return name.isEmpty ? "Someone" : name
     }
 
+    /// The name field after the server's name changed (a rename from another
+    /// phone): it follows only if the user hasn't edited it since it was
+    /// last filled, so an untouched field never offers to "save" the old name.
+    public static func followRename(field: String, lastSynced: String, server: String) -> String {
+        field == lastSynced ? server : field
+    }
+
+    /// Whether a token sheet may be dismissed: not while the request is in
+    /// flight (the token would land nowhere) and not by a swipe once it's
+    /// shown (only Done, after it's been seen). An error leaves the old
+    /// token working, so that sheet may go.
+    public static func tokenSheetSwipeable(token: String?, failed: Bool) -> Bool {
+        token == nil && failed
+    }
+
     /// The line under a home box: online, or when it was last seen.
     public static func agentLine(_ agent: WyzeCamAgent, now: Date = .now) -> String {
         let version = agent.version.isEmpty ? "" : " · \(agent.version)"

@@ -169,6 +169,9 @@ public struct WyzeCamProfileView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var name = ""
+    /// The server's name when the field was last filled from it: a rename
+    /// from elsewhere replaces the field only if it hasn't been edited.
+    @State private var syncedName = ""
     @State private var grants: [WyzeCamGrant]?
     @State private var contacts: [WyzeCamContact] = []
     @State private var sharing = false
@@ -260,7 +263,11 @@ public struct WyzeCamProfileView: View {
                 }
             }
         }
-        .onAppear { name = cam.name }
+        .onAppear { name = cam.name; syncedName = cam.name }
+        .onChange(of: cam.name) { _, newName in
+            name = WyzeCamSharing.followRename(field: name, lastSynced: syncedName, server: newName)
+            syncedName = newName
+        }
         .task(id: cam.id) { await load() }
         .refreshable { await load() }
         .sheet(isPresented: $sharing) {
@@ -347,6 +354,8 @@ public struct WyzeCamProfileView: View {
         guard !trimmedName.isEmpty, trimmedName != cam.name else { return }
         do {
             try await engine.rename(cam, to: trimmedName)
+            syncedName = trimmedName
+            name = trimmedName
             saved += 1
             message = nil
         } catch {
@@ -470,8 +479,7 @@ struct WyzeCamAgentView: View {
     let agent: WyzeCamAgent
 
     @State private var confirming = false
-    @State private var token: String?
-    @State private var message: String?
+    @State private var rotating = false
 
     var body: some View {
         Form {
@@ -486,38 +494,75 @@ struct WyzeCamAgentView: View {
             }
 
             Section {
-                if let token {
-                    TokenBox(token: token)
-                } else {
-                    Button("New token…", role: .destructive) { confirming = true }
-                }
+                Button("New token…", role: .destructive) { confirming = true }
             } header: {
                 Text("Token")
             } footer: {
-                Text(token == nil
-                     ? "The home box signs in with its token. A new one stops the old one at once; the box goes offline until its config has the new one."
-                     : "Shown once. Put it in the home box's config, then restart it.")
-            }
-
-            if let message {
-                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary) }
+                Text("The home box signs in with its token. A new one stops the old one at once; the box goes offline until its config has the new one.")
             }
         }
         .navigationTitle(agent.name)
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Make a new token for \(agent.name)?", isPresented: $confirming, titleVisibility: .visible) {
-            Button("New token", role: .destructive) { Task { await rotate() } }
+            Button("New token", role: .destructive) { rotating = true }
         } message: {
             Text("The current token stops working right away.")
         }
+        // The new token lives in a sheet that makes the request itself and
+        // can't be swiped away: once the old token is dead, losing the new
+        // one to a back-swipe would strand the home box.
+        .sheet(isPresented: $rotating) {
+            WyzeCamTokenSheet(title: "New token for \(agent.name)") {
+                try await engine.rotateToken(of: agent)
+            }
+        }
     }
+}
 
-    private func rotate() async {
-        do {
-            token = try await engine.rotateToken(of: agent)
-            message = nil
-        } catch {
-            message = "Couldn't make a new token: \(WyzeCamEngine.describe(error))"
+/// Fetches a token once and shows it until Done. Can't be dismissed while the
+/// request is in flight or before the token has been seen.
+struct WyzeCamTokenSheet: View {
+    let title: String
+    let fetch: () async throws -> String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var token: String?
+    @State private var error: String?
+    @State private var started = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let token {
+                    Section {
+                        TokenBox(token: token)
+                    } footer: {
+                        Text("Shown once. Put it in the home box's config as \"token\", then restart it.")
+                    }
+                } else if let error {
+                    Section { Text(error).foregroundStyle(.red) }
+                } else {
+                    Section { HStack { Spacer(); ProgressView(); Spacer() } }
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .disabled(token == nil && error == nil)
+                }
+            }
+        }
+        .interactiveDismissDisabled(!WyzeCamSharing.tokenSheetSwipeable(token: token, failed: error != nil))
+        .task {
+            guard !started else { return }
+            started = true
+            do {
+                token = try await fetch()
+            } catch {
+                self.error = "Couldn't make a new token: \(WyzeCamEngine.describe(error)). The old one still works."
+            }
         }
     }
 }
@@ -547,6 +592,7 @@ struct WyzeCamAddAgentSheet: View {
                     Section {
                         TextField("Name (e.g. Garage PC)", text: $name)
                             .submitLabel(.done)
+                            .disabled(busy)
                             .onSubmit { Task { await add() } }
                     } footer: {
                         Text("The computer at home that reaches your cameras.")
@@ -561,11 +607,17 @@ struct WyzeCamAddAgentSheet: View {
             .toolbar {
                 if result == nil {
                     ToolbarItem(placement: .cancellationAction) {
+                        // Not while registering: the box would exist with a token nobody saw.
                         Button("Cancel", role: .cancel) { dismiss() }
+                            .disabled(busy)
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Add") { Task { await add() } }
-                            .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+                        if busy {
+                            ProgressView()
+                        } else {
+                            Button("Add") { Task { await add() } }
+                                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
                     }
                 } else {
                     ToolbarItem(placement: .confirmationAction) {
@@ -574,12 +626,12 @@ struct WyzeCamAddAgentSheet: View {
                 }
             }
         }
-        .interactiveDismissDisabled(result != nil) // don't lose the token to a swipe
+        .interactiveDismissDisabled(result != nil || busy) // don't lose the token to a swipe
     }
 
     private func add() async {
         let n = name.trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty else { return }
+        guard !n.isEmpty, !busy, result == nil else { return } // one registration per sheet
         busy = true
         defer { busy = false }
         do {

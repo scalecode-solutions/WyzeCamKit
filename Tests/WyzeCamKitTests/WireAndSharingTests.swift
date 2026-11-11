@@ -97,4 +97,21 @@ import Connect
         #expect(WyzeCamSharing.agentLine(WyzeCamAgent(id: UUID(), name: "Box")) == "Never connected")
         #expect(WyzeCamSharing.agentLine(WyzeCamAgent(id: UUID(), name: "Box", lastSeen: now), now: now).hasPrefix("Last seen"))
     }
+
+    // C25: an untouched name field follows a rename from elsewhere; an
+    // edited one keeps the user's text (their Save is deliberate).
+    @Test func nameFieldFollowsOutsideRenamesOnlyWhenUntouched() {
+        #expect(WyzeCamSharing.followRename(field: "Porch", lastSynced: "Porch", server: "Front door") == "Front door")
+        #expect(WyzeCamSharing.followRename(field: "Porch cam", lastSynced: "Porch", server: "Front door") == "Porch cam")
+        #expect(WyzeCamSharing.followRename(field: "", lastSynced: "Porch", server: "Front door") == "",
+                "a cleared field is an edit too")
+    }
+
+    // C22/C23: a token sheet can't be swiped away while its request is in
+    // flight or once the token is shown; only after a failure.
+    @Test func tokenSheetSwipeRules() {
+        #expect(!WyzeCamSharing.tokenSheetSwipeable(token: nil, failed: false), "in flight")
+        #expect(!WyzeCamSharing.tokenSheetSwipeable(token: "tok", failed: false), "shown: Done only")
+        #expect(WyzeCamSharing.tokenSheetSwipeable(token: nil, failed: true), "failed: the old token still works")
+    }
 }
