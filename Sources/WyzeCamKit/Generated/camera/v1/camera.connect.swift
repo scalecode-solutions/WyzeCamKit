@@ -16,8 +16,9 @@ import SwiftProtobuf
 /// Watching is WebRTC to the server: Watch trades the client's SDP offer for
 /// the server's answer (no trickle: the server's candidates are fixed and in
 /// the answer; the client needn't wait for its own). Stream events arrive on
-/// the connection's "events" data channel: {"t":"ended"|"revoked"|"offline",
-/// "reason":"…"}.
+/// the connection's "events" data channel (negotiated, id 0), one text frame
+/// just before the server closes the connection: {"t":"ended"|"revoked"|
+/// "offline"|"server"}. Treat unknown values as "ended".
 public protocol Camera_V1_CameraServiceClientInterface: Sendable {
 
     /// Cameras the caller may watch: their own, plus ones shared with them.
