@@ -1,0 +1,54 @@
+# WyzeCamLab — the standalone harness for WyzeCamKit. Generate the project with:
+#   cd Demo && xcodegen generate
+# The generated WyzeCamLab.xcodeproj is committed (matching LushLab).
+name: WyzeCamLab
+options:
+  bundleIdPrefix: dev.scalecode
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+packages:
+  WyzeCamKit:
+    path: ..
+  MvAuth-iOS:
+    url: https://github.com/scalecode-solutions/MvAuth-iOS.git
+    branch: main
+settings:
+  base:
+    DEVELOPMENT_TEAM: YBFJUNLFT6
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+targets:
+  WyzeCamLab:
+    type: application
+    platform: iOS
+    sources:
+      - WyzeCamLab
+    dependencies:
+      - package: WyzeCamKit
+      - package: MvAuth-iOS
+        product: MvAuth
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.scalecode.WyzeCamLab
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+    # A real Info.plist (not generated keys): App Transport Security needs a
+    # dictionary, for plain http/ws to the dev stack on the local network.
+    info:
+      path: WyzeCamLab/Info.plist
+      properties:
+        CFBundleDisplayName: WyzeCamLab
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # Local dev only: reach mvServer + mvCamera on the Mac from a real phone.
+        NSLocalNetworkUsageDescription: "Used to reach the development server on your network."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+schemes:
+  WyzeCamLab:
+    build:
+      targets:
+        WyzeCamLab: all
+    run:
+      config: Debug

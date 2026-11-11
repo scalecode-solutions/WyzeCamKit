@@ -1,0 +1,170 @@
+import Foundation
+import Testing
+@testable import WyzeCamKit
+
+/// The client against a server (or network) that misbehaves: late, hostile,
+/// malformed, or simply gone. Each test names the attack it pins.
+@MainActor
+@Suite struct AdversarialClientTests {
+    func engine(_ t: FakeTransport, interval: Duration = .seconds(60)) -> WyzeCamEngine {
+        WyzeCamEngine(config: WyzeCamConfig(baseURL: URL(string: "http://localhost:1")!, currentUserID: me,
+                                            tokenProvider: { "t" }, refreshInterval: interval),
+                      transport: t)
+    }
+
+    func answer(_ sid: String, sdp: String = "v=0\r\ngarbage", quality: WyzeCamQuality = .hd) -> WatchAnswer {
+        WatchAnswer(sessionID: sid, answerSDP: sdp, iceServers: [], width: 0, height: 0, quality: quality)
+    }
+
+    // A session the server opened must never be left behind: an answer that
+    // lands after the view was hung up is stopped on the server, and the
+    // player stays idle.
+    @Test func lateAnswerIsHungUpNotPlayed() async throws {
+        let t = FakeTransport()
+        await t.set(answer: answer("late-session"), delay: .milliseconds(400))
+        let e = engine(t)
+        e.start()
+        let p = e.openPlayer(cameraID: UUID(), quality: .hd)
+        await eventually("watch sent") { await !t.watchCalls.isEmpty }
+        e.stop() // the user leaves before the server answers
+        await eventually("late session stopped on the server") { await t.stopped.contains("late-session") }
+        #expect(p.state == .idle)
+        try await Task.sleep(for: .seconds(3))
+        #expect(await t.watchCalls.count == 1, "a hung-up player must not reconnect")
+    }
+
+    // A server (or a man in the middle) answering with garbage SDP: the
+    // player fails, tells the server to drop the session, and backs off.
+    @Test func garbageAnswerFailsCleanly() async throws {
+        let t = FakeTransport()
+        await t.set(answer: answer("bad-sdp", sdp: "this is not sdp"))
+        let e = engine(t)
+        e.start()
+        let p = e.openPlayer(cameraID: UUID(), quality: .hd)
+        await eventually("failed") {
+            if case .failed(_, let retrying) = p.state { return retrying }
+            return false
+        }
+        await eventually("bad session stopped") { await t.stopped.contains("bad-sdp") }
+        e.stop()
+    }
+
+    // An always-offline camera must not be hammered: the retry backs off
+    // (2 s, 4 s, …, 30 s cap), so a few seconds see at most two tries.
+    @Test func retriesBackOff() async throws {
+        let t = FakeTransport() // watch always answers .offline
+        let e = engine(t)
+        e.start()
+        let p = e.openPlayer(cameraID: UUID(), quality: .sd)
+        try await Task.sleep(for: .milliseconds(4500))
+        let n = await t.watchCalls.count
+        #expect(n >= 2 && n <= 3, "\(n) tries in 4.5 s (want the first, one after 2 s, maybe one after 4 s more)")
+        e.closePlayer(p)
+        let after = await t.watchCalls.count
+        try await Task.sleep(for: .seconds(3))
+        #expect(await t.watchCalls.count == after, "a closed player never tries again")
+        e.stop()
+    }
+
+    // Signed out mid-session: no retry loop against a server that will only
+    // say no.
+    @Test func notSignedInDoesNotRetry() async throws {
+        let t = FakeTransport()
+        await t.set(watchError: .notAuthenticated)
+        let e = engine(t)
+        e.start()
+        let p = e.openPlayer(cameraID: UUID(), quality: .hd)
+        await eventually("failed") { p.state == .failed("Not signed in", retrying: false) }
+        try await Task.sleep(for: .seconds(3))
+        #expect(await t.watchCalls.count == 1)
+        e.stop()
+    }
+
+    // Too many open views (the server's cap): a clear message, and a retry
+    // later rather than a tight loop.
+    @Test func tooManyViewsBacksOff() async throws {
+        let t = FakeTransport()
+        await t.set(watchError: .tooManyViews)
+        let e = engine(t)
+        e.start()
+        let p = e.openPlayer(cameraID: UUID(), quality: .hd)
+        await eventually("failed") { p.state == .failed("Too many cameras open at once", retrying: true) }
+        e.stop()
+    }
+
+    // A refresh still in flight when the engine stops (sign-out, leaving the
+    // screen) must not write its result afterwards.
+    @Test func stopDuringRefreshWritesNothing() async throws {
+        let t = FakeTransport(cameras: [cam("Porch")])
+        await t.set(listDelay: .milliseconds(300))
+        let e = engine(t)
+        e.start()
+        await eventually("list in flight") { await t.listCalls == 1 }
+        e.wipeLocalStore()
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(e.cameras.isEmpty, "a stale answer leaked past wipeLocalStore")
+        #expect(e.status == .idle)
+    }
+
+    // Lifecycle calls in odd orders and repeats don't crash or double up.
+    @Test func lifecycleAbuse() async throws {
+        let t = FakeTransport(cameras: [cam("Porch")])
+        let e = engine(t, interval: .milliseconds(100))
+        e.stop() // before start
+        e.start(); e.start(); e.start() // idempotent: one refresh loop
+        try await Task.sleep(for: .milliseconds(350))
+        let calls = await t.listCalls
+        #expect(calls <= 5, "\(calls) refreshes in 350 ms at 100 ms: more than one loop is running")
+        let p = e.openPlayer(cameraID: UUID(), quality: .sd)
+        e.closePlayer(p)
+        e.closePlayer(p) // twice
+        p.retry() // on a closed player: nothing
+        e.wipeLocalStore()
+        e.wipeLocalStore()
+        e.stop()
+        #expect(e.openPlayerCount == 0)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await t.watchCalls.isEmpty, "a closed player connected anyway")
+    }
+
+    // The events channel: only well-formed text frames count. Noise must not
+    // end a view; an unknown kind from the server reads as "ended".
+    @Test func eventFramesAreStrict() {
+        let ok = { (s: String) in ServerEvent.parse(Data(s.utf8)) }
+        #expect(ok(#"{"t":"revoked"}"#) == "revoked")
+        #expect(ok(#"{"t":"offline","reason":"x"}"#) == "offline")
+        #expect(ok("not json") == nil)
+        #expect(ok(#"{"t":5}"#) == nil)
+        #expect(ok(#"{"t":""}"#) == nil)
+        #expect(ok(#"["t","revoked"]"#) == nil)
+        #expect(ok(#"{"type":"revoked"}"#) == nil)
+        #expect(ServerEvent.parse(Data(#"{"t":"revoked"}"#.utf8), binary: true) == nil)
+        let huge = #"{"t":"ended","pad":""# + String(repeating: "x", count: 5000) + #""}"#
+        #expect(ok(huge) == nil)
+        #expect(ok(#"{"t":""# + String(repeating: "a", count: 40) + #""}"#) == nil)
+        #expect(WyzeCamEndReason(event: "something-new") == .ended)
+        #expect(WyzeCamEndReason(event: "revoked") == .revoked && !WyzeCamEndReason.revoked.retryable)
+    }
+
+    // Every response type refuses malformed ids instead of inventing objects.
+    @Test func malformedResponsesAreRefused() {
+        var g = Camera_V1_Grant()
+        g.id = UUID().uuidString; g.cameraID = "x"; g.granteeID = UUID().uuidString
+        #expect(throws: WyzeCamTransportError.self) { try Wire.grant(g) }
+        var c = Camera_V1_Contact()
+        c.userID = "../etc"; c.name = "x"
+        #expect(throws: WyzeCamTransportError.self) { try Wire.contact(c) }
+        var a = Camera_V1_Agent()
+        a.id = ""
+        #expect(throws: WyzeCamTransportError.self) { try Wire.agent(a) }
+
+        // A bad avatar is no avatar, not a crash; odd times are no time.
+        c.userID = UUID().uuidString
+        c.avatar = "%%%not base64%%%"
+        #expect(try! Wire.contact(c).avatar == nil)
+        #expect(Wire.date(-5) == nil)
+        g.cameraID = UUID().uuidString
+        g.expiresMs = -1
+        #expect(try! Wire.grant(g).expiresAt == nil)
+    }
+}
