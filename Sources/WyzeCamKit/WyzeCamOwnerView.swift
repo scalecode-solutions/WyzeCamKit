@@ -431,7 +431,7 @@ struct WyzeCamShareSheet: View {
                 Section {
                     Toggle("End date", isOn: $hasEnd.animation())
                     if hasEnd {
-                        DatePicker("Until", selection: $end, in: Date.now..., displayedComponents: [.date, .hourAndMinute])
+                        DatePicker("Until", selection: $end, in: WyzeCamSharing.endRange(), displayedComponents: [.date, .hourAndMinute])
                     }
                 } footer: {
                     Text(hasEnd ? "Access ends on its own at that time." : "Access lasts until you remove it.")
@@ -459,13 +459,18 @@ struct WyzeCamShareSheet: View {
 
     private func submit() async {
         guard let c = candidates.first(where: { $0.id == selection }) else { return }
+        let until = hasEnd ? end : nil
+        if let problem = WyzeCamSharing.endProblem(until) {
+            error = problem
+            return
+        }
         busy = true
         defer { busy = false }
         do {
-            try await share(c, hasEnd ? end : nil)
+            try await share(c, until)
             dismiss()
         } catch {
-            self.error = "Couldn't share with \(c.name). They may not be able to see you yet."
+            self.error = WyzeCamSharing.shareFailure(error, name: c.name)
         }
     }
 }

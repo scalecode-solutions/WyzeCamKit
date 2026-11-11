@@ -13,8 +13,14 @@ public enum WyzeCamTransportError: Error, Sendable, Equatable {
     /// The server couldn't be reached, or a proxy in front of it answered
     /// for it (no network, 502/503, overloaded).
     case unreachable
-    /// Too many open views for this user.
+    /// Too many open views for this user (a watch hit the per-user cap).
     case tooManyViews
+    /// Some other cap was reached: shares on a camera, home boxes per
+    /// owner. The server's words.
+    case limit(String)
+    /// The server refused the request's values (an end date in the past or
+    /// too far away, a bad name). The server's words.
+    case invalid(String)
     case rpc(code: String, message: String)
     case badResponse(String)
 }
@@ -103,8 +109,13 @@ public struct ConnectWyzeCamTransport: WyzeCamTransport {
         req.cameraID = Wire.id(cameraID)
         req.offerSdp = offerSDP
         req.quality = quality == .sd ? .sd : .hd
-        let r = try value(await client.watch(request: req, headers: try await authHeaders()))
-        return Wire.answer(r)
+        do {
+            let r = try value(await client.watch(request: req, headers: try await authHeaders()))
+            return Wire.answer(r)
+        } catch WyzeCamTransportError.limit {
+            // On Watch, the one cap is open views per user.
+            throw WyzeCamTransportError.tooManyViews
+        }
     }
 
     public func iceServers() async throws -> IceConfig {
@@ -195,7 +206,9 @@ enum Wire {
         // The server says "camera offline" when it is; any other Unavailable
         // is the network or a proxy (502/503) answering for it.
         case .unavailable: (message ?? "").localizedCaseInsensitiveContains("offline") ? .offline : .unreachable
-        case .resourceExhausted: .tooManyViews
+        // Which cap depends on the call: Watch turns this into tooManyViews.
+        case .resourceExhausted: .limit(message ?? "limit reached")
+        case .invalidArgument: .invalid(message ?? "invalid request")
         default: .rpc(code: "\(code)", message: message ?? "rpc failed")
         }
     }

@@ -211,13 +211,14 @@ public final class WyzeCamEngine {
         cameras = Self.sorted(cameras)
     }
 
-    static func describe(_ error: Error) -> String {
+    nonisolated static func describe(_ error: Error) -> String {
         switch error as? WyzeCamTransportError {
         case .notAuthenticated: "Not signed in"
         case .offline: "Offline"
         case .unreachable: "Can't reach the server"
         case .notFound: "Not found"
         case .tooManyViews: "Too many cameras open at once"
+        case .limit(let m), .invalid(let m): WyzeCamSharing.sentence(m)
         case .rpc(_, let m), .badResponse(let m): m
         case nil: (error as? URLError) != nil ? "Can't reach the server" : error.localizedDescription
         }

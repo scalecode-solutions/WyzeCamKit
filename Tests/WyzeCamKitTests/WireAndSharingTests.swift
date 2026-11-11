@@ -32,7 +32,7 @@ import Connect
         #expect(Wire.error(code: .unauthenticated, message: nil) == .notAuthenticated)
         #expect(Wire.error(code: .notFound, message: nil) == .notFound)
         #expect(Wire.error(code: .unavailable, message: "camera offline") == .offline)
-        #expect(Wire.error(code: .resourceExhausted, message: nil) == .tooManyViews)
+        #expect(Wire.error(code: .resourceExhausted, message: nil) == .limit("limit reached"))
         #expect(Wire.error(code: .internalError, message: "x") == .rpc(code: "internalError", message: "x"))
     }
 

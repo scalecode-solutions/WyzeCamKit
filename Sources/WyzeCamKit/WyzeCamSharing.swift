@@ -22,9 +22,46 @@ public enum WyzeCamSharing {
     public static func candidates(contacts: [WyzeCamContact], grants: [WyzeCamGrant], owner: UUID,
                                   now: Date = .now) -> [WyzeCamContact] {
         let granted = Set(grants.filter { isActive($0, now: now) }.map(\.granteeID))
+        var seen = Set<UUID>() // a contact listed twice would be two rows with one id
         return contacts
-            .filter { $0.id != owner && !granted.contains($0.id) }
+            .filter { $0.id != owner && !granted.contains($0.id) && seen.insert($0.id).inserted }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// The furthest a share's end date may be set. The server refuses past
+    /// ten years; a day short of that leaves room for clocks that disagree.
+    public static let maxShareSpan: TimeInterval = (10 * 365 - 1) * 24 * 3600
+
+    /// The end dates the share sheet offers.
+    public static func endRange(now: Date = .now) -> ClosedRange<Date> {
+        now...now.addingTimeInterval(maxShareSpan)
+    }
+
+    /// What's wrong with an end date before it's sent, or nil when it's fine
+    /// (no end date is always fine). The sheet can sit open past the time
+    /// that was picked.
+    public static func endProblem(_ end: Date?, now: Date = .now) -> String? {
+        guard let end else { return nil }
+        if end <= now { return "That end time has passed. Pick a later one." }
+        if end > now.addingTimeInterval(maxShareSpan) { return "Pick an end date within ten years, or no end date." }
+        return nil
+    }
+
+    /// Why a share didn't go through, in words for the owner.
+    public static func shareFailure(_ error: Error, name: String) -> String {
+        switch error as? WyzeCamTransportError {
+        case .notFound: "Couldn't share with \(name). They may not be able to see you yet."
+        case .limit: "This camera is shared with as many people as it can be. Remove someone first."
+        default: "Couldn't share with \(name): \(WyzeCamEngine.describe(error))"
+        }
+    }
+
+    /// The server's lower-case words as a sentence.
+    static func sentence(_ s: String) -> String {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = t.first else { return "Something went wrong." }
+        let body = first.uppercased() + t.dropFirst()
+        return body.hasSuffix(".") ? body : body + "."
     }
 
     /// How to show who a share is for: the contact's current name, else the

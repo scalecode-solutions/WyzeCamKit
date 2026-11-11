@@ -245,9 +245,9 @@ public final class WyzeCamPlayer: Identifiable {
             case .offline: end(.offline, gen: gen)
             case .unreachable: fail("Can't reach the server", gen: gen)
             case .notFound: end(.revoked, gen: gen)
-            case .tooManyViews: fail("Too many cameras open at once", gen: gen)
+            case .tooManyViews, .limit: fail("Too many cameras open at once", gen: gen)
             case .notAuthenticated: fail("Not signed in", gen: gen)
-            case .rpc(_, let m), .badResponse(let m): fail(m, gen: gen)
+            case .rpc(_, let m), .badResponse(let m), .invalid(let m): fail(m, gen: gen)
             }
         } catch {
             guard gen == generation else { return }
