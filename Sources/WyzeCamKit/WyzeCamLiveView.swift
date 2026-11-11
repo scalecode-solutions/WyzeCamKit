@@ -10,10 +10,23 @@ public struct WyzeCamLiveView: View {
     public init(engine: WyzeCamEngine, cameraID: UUID) {
         self.engine = engine
         self.cameraID = cameraID
+        self.hostQuality = nil
     }
 
+    /// The same, with the host owning the quality (to remember a preference,
+    /// say). The picker writes it; a change from the host switches the stream
+    /// just the same.
+    public init(engine: WyzeCamEngine, cameraID: UUID, quality: Binding<WyzeCamQuality>) {
+        self.engine = engine
+        self.cameraID = cameraID
+        self.hostQuality = quality
+    }
+
+    private let hostQuality: Binding<WyzeCamQuality>?
     @State private var player: WyzeCamPlayer?
-    @State private var quality: WyzeCamQuality = .hd
+    @State private var ownQuality: WyzeCamQuality = .hd
+    private var quality: WyzeCamQuality { hostQuality?.wrappedValue ?? ownQuality }
+    private var qualityBinding: Binding<WyzeCamQuality> { hostQuality ?? $ownQuality }
     @State private var fill = false
     @State private var showInfo = false
 
@@ -59,7 +72,7 @@ public struct WyzeCamLiveView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 if camera?.hasSD == true {
-                    Picker("Quality", selection: $quality) {
+                    Picker("Quality", selection: qualityBinding) {
                         ForEach(WyzeCamQuality.allCases, id: \.self) { Text($0.label).tag($0) }
                     }
                     .pickerStyle(.segmented)
