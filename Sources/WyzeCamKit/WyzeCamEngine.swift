@@ -33,6 +33,9 @@ public final class WyzeCamEngine {
     public let config: WyzeCamConfig
     private let transport: any WyzeCamTransport
     private var players: [UUID: WyzeCamPlayer] = [:]
+    private var iceCache: IceConfig?
+    /// TURN credentials are refetched this long before they expire.
+    static let iceMargin: TimeInterval = 600
     private var refreshTask: Task<Void, Never>?
     /// Bumped by stop(): work started before it must not write after it.
     private var generation = 0
@@ -54,12 +57,17 @@ public final class WyzeCamEngine {
         guard !isRunning else { return }
         isRunning = true
         let gen = generation
+        let interval = config.refreshInterval
         players.values.forEach { $0.resume() }
+        // No strong self across the sleep: a host that drops a running
+        // engine gets its deinit (and every player hung up) right away.
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, gen == self.generation else { return }
-                await self.refresh()
-                try? await Task.sleep(for: self.config.refreshInterval)
+                do { // the strong reference ends with this scope, before the sleep
+                    guard let engine = self, gen == engine.generation else { return }
+                    await engine.refresh()
+                }
+                try? await Task.sleep(for: interval)
             }
         }
     }
@@ -81,6 +89,7 @@ public final class WyzeCamEngine {
         stop()
         players = [:]
         cameras = []
+        iceCache = nil
         status = .idle
     }
 
@@ -118,7 +127,8 @@ public final class WyzeCamEngine {
     /// `start()`), and keeps trying on its own until `closePlayer`. Pair every
     /// open with a close; the kit's views do.
     public func openPlayer(cameraID: UUID, quality: WyzeCamQuality) -> WyzeCamPlayer {
-        let p = WyzeCamPlayer(cameraID: cameraID, quality: quality, transport: transport)
+        let p = WyzeCamPlayer(cameraID: cameraID, quality: quality, transport: transport,
+                              ice: { [weak self] in await self?.iceServers() ?? [] })
         // Access gone: the camera should leave the list now, not at the next tick.
         p.onRevoked = { [weak self] in
             guard let self, self.isRunning else { return }
@@ -133,6 +143,19 @@ public final class WyzeCamEngine {
     public func closePlayer(_ player: WyzeCamPlayer) {
         player.suspend()
         players.removeValue(forKey: player.id)
+    }
+
+    /// TURN for the next connection: cached until shortly before it expires.
+    /// A failure to fetch means direct paths only, never a failed view.
+    func iceServers() async -> [IceServer] {
+        if let c = iceCache, let exp = c.expiresAt, exp.timeIntervalSinceNow > Self.iceMargin {
+            return c.servers
+        }
+        if let c = iceCache, c.servers.isEmpty, c.expiresAt == nil { return [] } // the server has none
+        let gen = generation
+        guard let fresh = try? await transport.iceServers() else { return iceCache?.servers ?? [] }
+        if gen == generation { iceCache = fresh }
+        return fresh.servers
     }
 
     /// Open players (for tests and the Lab).
@@ -192,6 +215,7 @@ public final class WyzeCamEngine {
         switch error as? WyzeCamTransportError {
         case .notAuthenticated: "Not signed in"
         case .offline: "Offline"
+        case .unreachable: "Can't reach the server"
         case .notFound: "Not found"
         case .tooManyViews: "Too many cameras open at once"
         case .rpc(_, let m), .badResponse(let m): m

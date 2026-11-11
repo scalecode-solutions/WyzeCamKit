@@ -73,6 +73,9 @@ public final class WyzeCamPlayer: Identifiable {
     private(set) var track: RTCVideoTrack?
 
     private let transport: any WyzeCamTransport
+    /// TURN for the next connection (the engine's cache). Asked before the
+    /// offer: non-trickle signaling can't add a relay afterwards.
+    private let ice: @MainActor () async -> [IceServer]
     private var pc: RTCPeerConnection?
     private var channel: RTCDataChannel?
     private var delegate: Delegate?
@@ -91,10 +94,12 @@ public final class WyzeCamPlayer: Identifiable {
     /// No first picture this long after connecting: hang up and try again.
     static let firstPictureTimeout: Duration = .seconds(20)
 
-    init(cameraID: UUID, quality: WyzeCamQuality, transport: any WyzeCamTransport) {
+    init(cameraID: UUID, quality: WyzeCamQuality, transport: any WyzeCamTransport,
+         ice: @escaping @MainActor () async -> [IceServer] = { [] }) {
         self.cameraID = cameraID
         self.requested = quality
         self.transport = transport
+        self.ice = ice
     }
 
     isolated deinit {
@@ -139,8 +144,23 @@ public final class WyzeCamPlayer: Identifiable {
         let gen = generation
         state = .connecting
         let t0 = ContinuousClock.now
+        Task { [weak self] in
+            guard let self else { return }
+            let servers = await self.ice()
+            guard gen == self.generation else { return } // hung up meanwhile
+            self.build(gen: gen, since: t0, iceServers: servers)
+        }
+    }
 
+    /// The ICE servers the last connection was built with (for tests).
+    private(set) var builtWithICE: [IceServer] = []
+
+    private func build(gen: Int, since t0: ContinuousClock.Instant, iceServers: [IceServer]) {
+        builtWithICE = iceServers
         let config = RTCConfiguration()
+        config.iceServers = iceServers.map {
+            RTCIceServer(urlStrings: $0.urls, username: $0.username, credential: $0.credential)
+        }
         config.sdpSemantics = .unifiedPlan
         config.bundlePolicy = .maxBundle
         config.rtcpMuxPolicy = .require
@@ -218,20 +238,12 @@ public final class WyzeCamPlayer: Identifiable {
             sessionID = answer.sessionID
             quality = answer.quality
             if answer.width > 0 { videoSize = CGSize(width: answer.width, height: answer.height) }
-            if !answer.iceServers.isEmpty {
-                // TURN for networks that block direct paths. Non-trickle: the
-                // relay is reached by our checks, not by telling the server.
-                let config = pc.configuration
-                config.iceServers = answer.iceServers.map {
-                    RTCIceServer(urlStrings: $0.urls, username: $0.username, credential: $0.credential)
-                }
-                pc.setConfiguration(config)
-            }
             try await pc.setRemoteDescription(RTCSessionDescription(type: .answer, sdp: answer.answerSDP))
         } catch let e as WyzeCamTransportError {
             guard gen == generation else { return }
             switch e {
             case .offline: end(.offline, gen: gen)
+            case .unreachable: fail("Can't reach the server", gen: gen)
             case .notFound: end(.revoked, gen: gen)
             case .tooManyViews: fail("Too many cameras open at once", gen: gen)
             case .notAuthenticated: fail("Not signed in", gen: gen)
@@ -275,7 +287,10 @@ public final class WyzeCamPlayer: Identifiable {
     private func fail(_ message: String, gen: Int) {
         guard gen == generation else { return }
         hangUp(tellServer: true)
-        let again = wanted && message != "Not signed in"
+        // Every failure retries with backoff, "Not signed in" too: the host's
+        // token may come back (a refresh), and while it's missing the
+        // transport fails locally without a request.
+        let again = wanted
         state = .failed(message, retrying: again)
         if again { scheduleRetry() }
     }

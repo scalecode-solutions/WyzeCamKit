@@ -158,6 +158,12 @@ struct PlayerStatus: View {
         }
     }
 
+    /// A revoked view can't come back by trying again.
+    private var isRevoked: Bool {
+        if case .ended(.revoked, _) = player.state { return true }
+        return false
+    }
+
     private func note(_ symbol: String, _ text: String, retrying: Bool) -> some View {
         VStack(spacing: 6) {
             Image(systemName: symbol).font(compact ? .title3 : .title)
@@ -166,7 +172,7 @@ struct PlayerStatus: View {
                 .multilineTextAlignment(.center)
             if retrying {
                 Text("Trying again…").font(compact ? .caption2 : .caption).opacity(0.7)
-            } else if !compact {
+            } else if !compact && !isRevoked {
                 Button("Try again") { player.retry() }
                     .buttonStyle(.bordered)
                     .tint(.white)

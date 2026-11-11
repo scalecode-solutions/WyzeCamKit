@@ -8,8 +8,11 @@ public enum WyzeCamTransportError: Error, Sendable, Equatable {
     case notAuthenticated
     /// The camera doesn't exist for this user (no access looks the same, on purpose).
     case notFound
-    /// The camera or its home box is offline.
+    /// The camera or its home box is offline (the server said so).
     case offline
+    /// The server couldn't be reached, or a proxy in front of it answered
+    /// for it (no network, 502/503, overloaded).
+    case unreachable
     /// Too many open views for this user.
     case tooManyViews
     case rpc(code: String, message: String)
@@ -23,6 +26,9 @@ public protocol WyzeCamTransport: Sendable {
     func watch(cameraID: UUID, offerSDP: String, quality: WyzeCamQuality) async throws -> WatchAnswer
     /// Hang up a view. Best effort: the server also notices a dropped connection.
     func stopWatching(sessionID: String) async
+    /// TURN credentials, fetched before an offer (non-trickle: the relay must
+    /// be in the connection's configuration from the start).
+    func iceServers() async throws -> IceConfig
 
     // Owner tools.
     func updateCamera(id: UUID, name: String?, color: WyzeCamColor?) async throws -> WyzeCamera
@@ -37,6 +43,8 @@ public protocol WyzeCamTransport: Sendable {
 }
 
 public extension WyzeCamTransport {
+    /// Default for fakes and servers without TURN: direct paths only.
+    func iceServers() async throws -> IceConfig { .none }
     /// Defaults for fakes that only cover viewing.
     func updateCamera(id: UUID, name: String?, color: WyzeCamColor?) async throws -> WyzeCamera {
         throw WyzeCamTransportError.badResponse("not supported")
@@ -97,6 +105,11 @@ public struct ConnectWyzeCamTransport: WyzeCamTransport {
         req.quality = quality == .sd ? .sd : .hd
         let r = try value(await client.watch(request: req, headers: try await authHeaders()))
         return Wire.answer(r)
+    }
+
+    public func iceServers() async throws -> IceConfig {
+        let r = try value(await client.iceServers(request: .init(), headers: try await authHeaders()))
+        return Wire.ice(r)
     }
 
     public func stopWatching(sessionID: String) async {
@@ -179,7 +192,9 @@ enum Wire {
         switch code {
         case .unauthenticated: .notAuthenticated
         case .notFound, .permissionDenied: .notFound
-        case .unavailable: .offline
+        // The server says "camera offline" when it is; any other Unavailable
+        // is the network or a proxy (502/503) answering for it.
+        case .unavailable: (message ?? "").localizedCaseInsensitiveContains("offline") ? .offline : .unreachable
         case .resourceExhausted: .tooManyViews
         default: .rpc(code: "\(code)", message: message ?? "rpc failed")
         }
@@ -206,9 +221,18 @@ enum Wire {
                      lastSeen: date(a.lastSeenMs), createdAt: date(a.createdMs))
     }
 
+    static func server(_ s: Camera_V1_IceServer) -> IceServer {
+        IceServer(urls: s.urls, username: s.username, credential: s.credential)
+    }
+
+    static func ice(_ r: Camera_V1_IceServersResponse) -> IceConfig {
+        let servers = r.iceServers.filter { !$0.urls.isEmpty }.map(server)
+        return IceConfig(servers: servers, expiresAt: servers.isEmpty ? nil : date(r.expiresMs))
+    }
+
     static func answer(_ r: Camera_V1_WatchResponse) -> WatchAnswer {
         WatchAnswer(sessionID: r.sessionID, answerSDP: r.answerSdp,
-                    iceServers: r.iceServers.map { .init(urls: $0.urls, username: $0.username, credential: $0.credential) },
+                    iceServers: r.iceServers.map(server),
                     width: Int(r.width), height: Int(r.height),
                     quality: r.quality == .sd ? .sd : .hd)
     }

@@ -66,17 +66,20 @@ import Testing
         e.stop()
     }
 
-    // Signed out mid-session: no retry loop against a server that will only
-    // say no.
-    @Test func notSignedInDoesNotRetry() async throws {
+    // C20: signed out mid-session. The player keeps trying with backoff (so
+    // it recovers on its own when the host's token comes back), never in a
+    // tight loop.
+    @Test func notSignedInBacksOffAndRecovers() async throws {
         let t = FakeTransport()
         await t.set(watchError: .notAuthenticated)
         let e = engine(t)
         e.start()
         let p = e.openPlayer(cameraID: UUID(), quality: .hd)
-        await eventually("failed") { p.state == .failed("Not signed in", retrying: false) }
-        try await Task.sleep(for: .seconds(3))
-        #expect(await t.watchCalls.count == 1)
+        await eventually("failed") { p.state == .failed("Not signed in", retrying: true) }
+        try await Task.sleep(for: .milliseconds(1500))
+        #expect(await t.watchCalls.count == 1, "no tight loop while signed out")
+        await t.set(watchError: .offline) // signed back in: the camera is merely offline now
+        await eventually("recovered past auth", timeout: .seconds(6)) { p.state == .ended(.offline, retrying: true) }
         e.stop()
     }
 
@@ -166,5 +169,68 @@ import Testing
         g.cameraID = UUID().uuidString
         g.expiresMs = -1
         #expect(try! Wire.grant(g).expiresAt == nil)
+    }
+
+    // C18: TURN is fetched BEFORE the offer and goes into the connection's
+    // configuration; one fetch serves later players until it nears expiry.
+    @Test func turnComesBeforeTheOffer() async throws {
+        let t = FakeTransport()
+        let relay = IceServer(urls: ["turn:turn.example:3478"], username: "u", credential: "c")
+        await t.set(ice: IceConfig(servers: [relay], expiresAt: Date().addingTimeInterval(24 * 3600)))
+        let e = engine(t)
+        e.start()
+        let p = e.openPlayer(cameraID: UUID(), quality: .hd)
+        await eventually("watch") { await !t.watchCalls.isEmpty }
+        let order = await t.calls.filter { $0 != "list" }
+        #expect(order.prefix(2) == ["ice", "watch"], "TURN must be known before the offer: \(order)")
+        #expect(p.builtWithICE == [relay], "the relay must be in the connection's configuration")
+        let q = e.openPlayer(cameraID: UUID(), quality: .sd)
+        await eventually("second watch") { await t.watchCalls.count >= 2 }
+        #expect(await t.iceCalls == 1, "cached credentials are reused")
+        #expect(q.builtWithICE == [relay])
+        e.stop()
+    }
+
+    // Credentials close to expiry are fetched again; a TURN outage never
+    // blocks a view (direct paths only).
+    @Test func turnNearExpiryRefetchesAndOutageStillConnects() async throws {
+        let t = FakeTransport()
+        let relay = IceServer(urls: ["turn:t"], username: "u", credential: "c")
+        await t.set(ice: IceConfig(servers: [relay], expiresAt: Date().addingTimeInterval(60))) // inside the margin
+        let e = engine(t)
+        e.start()
+        _ = await e.iceServers()
+        _ = await e.iceServers()
+        #expect(await t.iceCalls == 2, "credentials inside the expiry margin must be refetched")
+
+        let t2 = FakeTransport()
+        await t2.set(ice: .none, error: .unreachable)
+        let e2 = engine(t2)
+        e2.start()
+        let p = e2.openPlayer(cameraID: UUID(), quality: .hd)
+        await eventually("watch despite the TURN outage") { await !t2.watchCalls.isEmpty }
+        #expect(p.builtWithICE.isEmpty)
+        e.stop(); e2.stop()
+    }
+
+    // C21: a host dropping a running engine frees it now, not after the
+    // refresh loop's sleep (which would keep players up meanwhile).
+    @Test func droppedEngineIsFreedPromptly() async throws {
+        let t = FakeTransport(cameras: [cam("Porch")])
+        var e: WyzeCamEngine? = engine(t, interval: .seconds(60))
+        weak let weakEngine = e
+        e?.start()
+        await eventually("ready") { e?.status == .ready }
+        e = nil
+        await eventually("engine freed", timeout: .seconds(2)) { weakEngine == nil }
+    }
+
+    // C19: only the server's "camera offline" means offline; a proxy or the
+    // network answering Unavailable is "can't reach the server".
+    @Test func unavailableIsOfflineOnlyWhenTheServerSaysSo() {
+        #expect(Wire.error(code: .unavailable, message: "camera offline") == .offline)
+        #expect(Wire.error(code: .unavailable, message: "upstream connect error") == .unreachable)
+        #expect(Wire.error(code: .unavailable, message: nil) == .unreachable)
+        #expect(WyzeCamEngine.describe(WyzeCamTransportError.unreachable) == "Can't reach the server")
     }
 }

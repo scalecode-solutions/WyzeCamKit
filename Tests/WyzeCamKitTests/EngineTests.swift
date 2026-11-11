@@ -11,6 +11,11 @@ actor FakeTransport: WyzeCamTransport {
     var watchAnswer: WatchAnswer?
     var watchDelay: Duration = .zero
     var listDelay: Duration = .zero
+    var ice: IceConfig = .none
+    var iceError: WyzeCamTransportError?
+    private(set) var iceCalls = 0
+    /// Every call, in order ("ice", "watch", "list").
+    private(set) var calls: [String] = []
     private(set) var listCalls = 0
     private(set) var watchCalls: [(UUID, WyzeCamQuality, String)] = []
     private(set) var stopped: [String] = []
@@ -22,6 +27,14 @@ actor FakeTransport: WyzeCamTransport {
     func set(watchError: WyzeCamTransportError) { self.watchError = watchError }
     func set(answer: WatchAnswer?, delay: Duration = .zero) { watchAnswer = answer; watchDelay = delay }
     func set(listDelay: Duration) { self.listDelay = listDelay }
+    func set(ice: IceConfig, error: WyzeCamTransportError? = nil) { self.ice = ice; iceError = error }
+
+    func iceServers() async throws -> IceConfig {
+        iceCalls += 1
+        calls.append("ice")
+        if let iceError { throw iceError }
+        return ice
+    }
 
     func listCameras() async throws -> [WyzeCamera] {
         listCalls += 1
@@ -32,6 +45,7 @@ actor FakeTransport: WyzeCamTransport {
 
     func watch(cameraID: UUID, offerSDP: String, quality: WyzeCamQuality) async throws -> WatchAnswer {
         watchCalls.append((cameraID, quality, offerSDP))
+        calls.append("watch")
         if watchDelay > .zero { try? await Task.sleep(for: watchDelay) }
         if let watchAnswer { return watchAnswer }
         throw watchError

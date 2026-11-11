@@ -71,13 +71,18 @@ engine.wipeLocalStore()
 
 - **Non-trickle offer → answer** over the `Watch` RPC. The server's
   candidates are fixed and in its answer; the client doesn't wait for its own
-  (the server learns them from the connectivity checks). TURN credentials in
-  the answer are applied for networks that block direct paths.
+  (the server learns them from the connectivity checks).
+- **TURN before the offer.** Relay credentials come from the `IceServers` RPC
+  and go into the connection's configuration when it's built (a relay can't
+  be added later without trickle). The engine caches them until 10 minutes
+  before they expire; if they can't be fetched, the view goes ahead on direct
+  paths only.
 - **Server events** arrive on a negotiated data channel (id 0, `events`):
   `revoked`, `ended`, `offline`, `server`. Only well-formed text frames count;
   noise never ends a view.
 - **Retries on its own** with backoff (2 s doubling to 30 s) after an ending
-  that may pass (offline, stream ended, connection dropped, too many views).
+  that may pass (offline, stream ended, connection dropped, too many views,
+  can't reach the server, not signed in: the host's token may come back).
   A revoked view never retries, and the engine reloads the list at once so the
   camera disappears.
 - An answer that arrives after the view was hung up is stopped on the server,

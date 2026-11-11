@@ -30,6 +30,13 @@ public protocol Camera_V1_CameraServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `stopWatching`(request: Camera_V1_StopWatchingRequest, headers: Connect.Headers) async -> ResponseMessage<Camera_V1_StopWatchingResponse>
 
+    /// TURN for networks that block direct paths, fetched BEFORE making the
+    /// offer: with non-trickle signaling the relay has to be in the
+    /// PeerConnection's configuration from the start. Empty when the server has
+    /// no TURN. Cache until expires_ms (minus a margin).
+    @available(iOS 13, *)
+    func `iceServers`(request: Camera_V1_IceServersRequest, headers: Connect.Headers) async -> ResponseMessage<Camera_V1_IceServersResponse>
+
     /// The caller's friends (id, name, avatar) for share pickers. Grants nothing.
     @available(iOS 13, *)
     func `listContacts`(request: Camera_V1_ListContactsRequest, headers: Connect.Headers) async -> ResponseMessage<Camera_V1_ListContactsResponse>
@@ -84,6 +91,11 @@ public final class Camera_V1_CameraServiceClient: Camera_V1_CameraServiceClientI
     }
 
     @available(iOS 13, *)
+    public func `iceServers`(request: Camera_V1_IceServersRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Camera_V1_IceServersResponse> {
+        return await self.client.unary(path: "/camera.v1.CameraService/IceServers", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listContacts`(request: Camera_V1_ListContactsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Camera_V1_ListContactsResponse> {
         return await self.client.unary(path: "/camera.v1.CameraService/ListContacts", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -128,6 +140,7 @@ public final class Camera_V1_CameraServiceClient: Camera_V1_CameraServiceClientI
             public static let listCameras = Connect.MethodSpec(name: "ListCameras", service: "camera.v1.CameraService", type: .unary)
             public static let watch = Connect.MethodSpec(name: "Watch", service: "camera.v1.CameraService", type: .unary)
             public static let stopWatching = Connect.MethodSpec(name: "StopWatching", service: "camera.v1.CameraService", type: .unary)
+            public static let iceServers = Connect.MethodSpec(name: "IceServers", service: "camera.v1.CameraService", type: .unary)
             public static let listContacts = Connect.MethodSpec(name: "ListContacts", service: "camera.v1.CameraService", type: .unary)
             public static let registerAgent = Connect.MethodSpec(name: "RegisterAgent", service: "camera.v1.CameraService", type: .unary)
             public static let rotateAgentToken = Connect.MethodSpec(name: "RotateAgentToken", service: "camera.v1.CameraService", type: .unary)

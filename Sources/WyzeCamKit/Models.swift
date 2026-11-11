@@ -118,13 +118,36 @@ public struct RegisteredAgent: Sendable, Equatable {
     public let token: String
 }
 
+/// A relay (TURN) server and its short-lived credentials.
+public struct IceServer: Sendable, Equatable {
+    public let urls: [String]
+    public let username: String
+    public let credential: String
+
+    public init(urls: [String], username: String, credential: String) {
+        self.urls = urls
+        self.username = username
+        self.credential = credential
+    }
+}
+
+/// TURN for networks that block direct paths, and when it stops working.
+public struct IceConfig: Sendable, Equatable {
+    public let servers: [IceServer]
+    /// nil when there are no servers.
+    public let expiresAt: Date?
+
+    public init(servers: [IceServer], expiresAt: Date?) {
+        self.servers = servers
+        self.expiresAt = expiresAt
+    }
+
+    public static let none = IceConfig(servers: [], expiresAt: nil)
+}
+
 /// What `watch` gets back: the server's half of the WebRTC handshake.
 public struct WatchAnswer: Sendable, Equatable {
-    public struct IceServer: Sendable, Equatable {
-        public let urls: [String]
-        public let username: String
-        public let credential: String
-    }
+    public typealias IceServer = WyzeCamKit.IceServer
     public let sessionID: String
     public let answerSDP: String
     public let iceServers: [IceServer]
