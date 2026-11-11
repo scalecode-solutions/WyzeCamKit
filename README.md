@@ -90,6 +90,15 @@ engine.wipeLocalStore()
 - `state`, `quality` (SD falls back to HD on a camera without one),
   `videoSize`, `fps` and `firstPictureAfter` are observable.
 
+`WyzeCamLiveView(engine:cameraID:)` keeps its own HD/SD choice;
+`WyzeCamLiveView(engine:cameraID:quality:)` lets the host own it (to
+remember a preference). Either way a change replaces the stream, never adds
+one.
+
+Server caps come back as `WyzeCamTransportError.limit(message)` (a camera's
+share list is full, too many home boxes) and refused values as
+`.invalid(message)`; only a cap on `Watch` becomes `.tooManyViews`.
+
 ## Owner tools
 
 `WyzeCamOwnerView` (push it; show its entry point to owners) lists your
@@ -125,10 +134,16 @@ Regenerate the project after changing `Demo/project.yml`: `cd Demo && xcodegen g
 xcodebuild test -scheme WyzeCamKit -destination 'platform=iOS Simulator,name=<a simulator>'
 ```
 
-Happy paths and an adversarial suite: late and garbage answers from the
+Happy paths and adversarial suites: late and garbage answers from the
 server, retry backoff, a refresh landing after stop, lifecycle abuse, strict
-event frames, malformed responses. Player tests run real WebRTC offer
-creation against a fake transport.
+event frames, malformed responses; sharing (caps named for what they are,
+share failures that say why, end dates the server takes, messy contact
+lists, a camera revoked while watched); and screen lifetimes, with the grid
+and live view hosted in a real window so SwiftUI's own appear and
+disappear drive the players (tiles live exactly as long as the grid and
+follow the list, opening a camera hangs the tiles up, engine stop goes
+quiet, thrashing and sign-out leak nothing). Player tests run real WebRTC
+offer creation against a fake transport.
 
 ## Generated code
 
