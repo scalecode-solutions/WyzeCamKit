@@ -180,5 +180,8 @@ struct PlayerStatus: View {
         }
         .foregroundStyle(.white)
         .padding(compact ? 6 : 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Readable over whatever picture was last on screen.
+        .background(.black.opacity(0.55), ignoresSafeAreaEdges: [])
     }
 }
