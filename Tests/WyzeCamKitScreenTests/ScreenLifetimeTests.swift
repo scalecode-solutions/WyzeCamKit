@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 import UIKit
 @testable import WyzeCamKit
+import WyzeCamKitTestSupport
 
 /// The kit's screens, hosted for real (a window, SwiftUI's own appear and
 /// disappear), against a fake server: every screen's players live exactly

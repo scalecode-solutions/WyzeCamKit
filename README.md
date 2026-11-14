@@ -7,7 +7,8 @@ LushKit.
 
 iOS 26, Swift 6 (strict concurrency). Depends on connect-swift,
 swift-protobuf and [smc_webRTC](https://github.com/scalecode-solutions/smc_webRTC)
-(a shared WebRTC binary, so a host that already links it never carries two).
+158.x (WebRTC M158; a shared WebRTC binary, so a host that already links it
+never carries two, as long as both ask for the same major version).
 
 ## What a host does
 
@@ -144,6 +145,11 @@ disappear drive the players (tiles live exactly as long as the grid and
 follow the list, opening a camera hangs the tiles up, engine stop goes
 quiet, thrashing and sign-out leak nothing). Player tests run real WebRTC
 offer creation against a fake transport.
+
+The screen tests are a target of their own (`WyzeCamKitScreenTests`), so
+they run in their own process: the first SwiftUI render in a test process
+holds the main thread for seconds, which would stall the player tests beside
+it. Both targets share `Tests/TestSupport` (the fake server and wait helper).
 
 ## Generated code
 

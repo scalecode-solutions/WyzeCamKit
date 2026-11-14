@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import WyzeCamKit
+import WyzeCamKitTestSupport
 
 /// The client against a server (or network) that misbehaves: late, hostile,
 /// malformed, or simply gone. Each test names the attack it pins.
@@ -50,15 +51,21 @@ import Testing
     }
 
     // An always-offline camera must not be hammered: the retry backs off
-    // (2 s, 4 s, …, 30 s cap), so a few seconds see at most two tries.
+    // (2 s, 4 s, …, 30 s cap). Read as gaps between tries, not tries per
+    // window: a busy machine only stretches gaps, so this can't flake, and a
+    // missing or shrinking backoff still fails.
     @Test func retriesBackOff() async throws {
         let t = FakeTransport() // watch always answers .offline
         let e = engine(t)
         e.start()
         let p = e.openPlayer(cameraID: UUID(), quality: .sd)
-        try await Task.sleep(for: .milliseconds(4500))
-        let n = await t.watchCalls.count
-        #expect(n >= 2 && n <= 3, "\(n) tries in 4.5 s (want the first, one after 2 s, maybe one after 4 s more)")
+        await eventually("three tries", timeout: .seconds(30)) { await t.watchCalls.count >= 3 }
+        let times = await t.watchTimes
+        guard times.count >= 3 else { return } // eventually already recorded the failure
+        let gap1 = times[1] - times[0], gap2 = times[2] - times[1]
+        #expect(gap1 >= .milliseconds(1900), "first retry after \(gap1), want about 2 s")
+        #expect(gap2 >= .milliseconds(3900), "second retry after \(gap2), want about 4 s")
+        #expect(gap2 > gap1, "the backoff grows")
         e.closePlayer(p)
         let after = await t.watchCalls.count
         try await Task.sleep(for: .seconds(3))

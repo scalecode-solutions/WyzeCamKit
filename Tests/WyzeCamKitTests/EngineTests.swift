@@ -1,74 +1,7 @@
 import Foundation
 import Testing
 @testable import WyzeCamKit
-
-/// A server stand-in that records what the kit asked for.
-actor FakeTransport: WyzeCamTransport {
-    var cameras: [WyzeCamera] = []
-    var listError: WyzeCamTransportError?
-    var watchError: WyzeCamTransportError = .offline
-    /// When set, watch answers with this (after `watchDelay`) instead of failing.
-    var watchAnswer: WatchAnswer?
-    var watchDelay: Duration = .zero
-    var listDelay: Duration = .zero
-    var ice: IceConfig = .none
-    var iceError: WyzeCamTransportError?
-    private(set) var iceCalls = 0
-    /// Every call, in order ("ice", "watch", "list").
-    private(set) var calls: [String] = []
-    private(set) var listCalls = 0
-    private(set) var watchCalls: [(UUID, WyzeCamQuality, String)] = []
-    private(set) var stopped: [String] = []
-
-    init(cameras: [WyzeCamera] = []) { self.cameras = cameras }
-
-    func set(cameras: [WyzeCamera]) { self.cameras = cameras }
-    func set(listError: WyzeCamTransportError?) { self.listError = listError }
-    func set(watchError: WyzeCamTransportError) { self.watchError = watchError }
-    func set(answer: WatchAnswer?, delay: Duration = .zero) { watchAnswer = answer; watchDelay = delay }
-    func set(listDelay: Duration) { self.listDelay = listDelay }
-    func set(ice: IceConfig, error: WyzeCamTransportError? = nil) { self.ice = ice; iceError = error }
-
-    func iceServers() async throws -> IceConfig {
-        iceCalls += 1
-        calls.append("ice")
-        if let iceError { throw iceError }
-        return ice
-    }
-
-    func listCameras() async throws -> [WyzeCamera] {
-        listCalls += 1
-        if listDelay > .zero { try? await Task.sleep(for: listDelay) }
-        if let listError { throw listError }
-        return cameras
-    }
-
-    func watch(cameraID: UUID, offerSDP: String, quality: WyzeCamQuality) async throws -> WatchAnswer {
-        watchCalls.append((cameraID, quality, offerSDP))
-        calls.append("watch")
-        if watchDelay > .zero { try? await Task.sleep(for: watchDelay) }
-        if let watchAnswer { return watchAnswer }
-        throw watchError
-    }
-
-    func stopWatching(sessionID: String) async { stopped.append(sessionID) }
-}
-
-@MainActor
-func eventually(_ what: String, timeout: Duration = .seconds(5), _ cond: @MainActor () async -> Bool) async {
-    let deadline = ContinuousClock.now + timeout
-    while ContinuousClock.now < deadline {
-        if await cond() { return }
-        try? await Task.sleep(for: .milliseconds(20))
-    }
-    Issue.record("timed out waiting for \(what)")
-}
-
-let me = UUID()
-
-func cam(_ name: String, owned: Bool = true, online: Bool = true, sd: Bool = true) -> WyzeCamera {
-    WyzeCamera(id: UUID(), name: name, online: online, owned: owned, hasSD: sd, camKey: name.lowercased())
-}
+import WyzeCamKitTestSupport
 
 @MainActor
 @Suite struct EngineTests {

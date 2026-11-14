@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import Connect
 @testable import WyzeCamKit
+import WyzeCamKitTestSupport
 
 @Suite struct WireTests {
     @Test func cameraMapping() throws {

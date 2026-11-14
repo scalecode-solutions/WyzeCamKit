@@ -19,7 +19,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/connectrpc/connect-swift", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-protobuf", from: "1.27.0"),
-        .package(url: "https://github.com/scalecode-solutions/smc_webRTC.git", from: "152.0.0"),
+        .package(url: "https://github.com/scalecode-solutions/smc_webRTC.git", from: "158.0.0"),
     ],
     targets: [
         .target(
@@ -31,9 +31,25 @@ let package = Package(
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        // Test helpers (a fake server, a wait helper) shared by both test targets.
+        .target(
+            name: "WyzeCamKitTestSupport",
+            dependencies: ["WyzeCamKit"],
+            path: "Tests/TestSupport",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "WyzeCamKitTests",
-            dependencies: ["WyzeCamKit"],
+            dependencies: ["WyzeCamKit", "WyzeCamKitTestSupport"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        // The screens hosted in a real window. A target of their own: the
+        // first SwiftUI render in a test process holds the main thread for
+        // seconds (tens of seconds on a busy machine), which would stall the
+        // player tests if they shared a process.
+        .testTarget(
+            name: "WyzeCamKitScreenTests",
+            dependencies: ["WyzeCamKit", "WyzeCamKitTestSupport"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

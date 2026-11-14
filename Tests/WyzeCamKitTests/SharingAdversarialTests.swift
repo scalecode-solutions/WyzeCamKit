@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import WyzeCamKit
+import WyzeCamKitTestSupport
 
 /// Sharing from the client's side, attacked: what the owner is told when a
 /// share can't be made, which people are offered, which end dates go out,
